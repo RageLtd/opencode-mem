@@ -159,58 +159,62 @@ const runClaudeMem = async (
 
 export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 	const { client, $, directory } = ctx;
-	let isBinaryReady = false;
 
-	const checkBinaryExists = async (): Promise<boolean> => {
-		if (isBinaryReady) return true;
-		const binPath = getBinPath();
-		const result = await $`test -x ${binPath}`.quiet().nothrow();
-		if (result.exitCode === 0) {
-			isBinaryReady = true;
-			// Check for updates in the background, don't block
-			ensureBinaryUpToDate($, client.app.log);
-			return true;
-		}
-		// Binary missing — must download synchronously
-		const success = await ensureBinaryUpToDate($, client.app.log);
-		if (success) {
-			isBinaryReady = true;
-		}
-		return success;
+	// Use Bun.file for non-blocking binary existence check
+	const binPath = getBinPath();
+	const isBinaryPresent = await Bun.file(binPath).exists();
+
+	// If binary exists, check for updates in the background
+	if (isBinaryPresent) {
+		ensureBinaryUpToDate($, client.app.log);
+	}
+
+	// Pre-fetch context eagerly so system.transform returns instantly
+	let cachedContext: string | null = null;
+	let contextReady = false;
+
+	const refreshContext = () => {
+		if (!isBinaryPresent) return;
+		runClaudeMem($, ["hook:context", "--project", directory]).then((result) => {
+			cachedContext = result.error ? null : result.data;
+			contextReady = true;
+		});
 	};
+
+	// Start fetching context immediately at plugin init
+	refreshContext();
 
 	return {
 		"experimental.chat.system.transform": async (_input, output) => {
-			const ready = await checkBinaryExists();
-			if (!ready) return;
-
-			const result = await runClaudeMem($, [
-				"hook:context",
-				"--project",
-				directory,
-			]);
-
-			if (result.error) {
-				await client.app.log({
-					body: {
-						service: "opencode-mem",
-						level: "error",
-						message: "Failed to get context",
-						extra: { error: result.error },
-					},
-				});
+			if (!isBinaryPresent && !contextReady) {
+				// Binary missing — try to download (blocks only on first use with no binary)
+				const success = await ensureBinaryUpToDate($, client.app.log);
+				if (!success) return;
+				const result = await runClaudeMem($, [
+					"hook:context",
+					"--project",
+					directory,
+				]);
+				if (result.data) {
+					output.system.push(result.data);
+				}
 				return;
 			}
 
-			if (result.data) {
-				output.system.push(result.data);
+			// Return cached context immediately (non-blocking)
+			if (cachedContext) {
+				output.system.push(cachedContext);
 			}
+
+			// Refresh context in the background for next message
+			refreshContext();
 		},
 
-		"tool.execute.after": async (input, output) => {
+		"tool.execute.after": async (input, _output) => {
+			if (!isBinaryPresent) return;
 			const toolName = input.tool;
 			const args = JSON.stringify(input.args || {});
-			const toolOutput = output.output || "";
+			const toolOutput = _output.output || "";
 
 			// Fire-and-forget to avoid blocking OpenCode's UI
 			runClaudeMem($, [
@@ -227,6 +231,7 @@ export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 		},
 
 		"experimental.session.compacting": async (_input, output) => {
+			if (!isBinaryPresent) return;
 			const summaryResult = await runClaudeMem($, [
 				"hook:summary",
 				"--project",
