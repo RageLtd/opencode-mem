@@ -180,11 +180,29 @@ Skills are discovered **independently from plugins**. OpenCode scans `{skill,ski
 
 ## Plugin Hooks Used
 
-| Hook | Purpose |
-|------|---------|
-| `experimental.chat.system.transform` | Injects past context into system prompt, triggers binary update |
-| `tool.execute.after` | Captures tool executions as observations |
-| `experimental.session.compacting` | Injects summary context during session compaction |
+| Hook | Binary Command | Frequency | Blocking? |
+|------|---------------|-----------|-----------|
+| `experimental.chat.system.transform` | `hook:context` | Once per session (first message only) | Yes (first call), then cached |
+| `tool.execute.after` | `hook:save` | After each tool use | No (fire-and-forget) |
+| `experimental.session.compacting` | `hook:summary` | On session compaction | Yes |
+
+**Performance constraints**: OpenCode awaits all hook callbacks. Blocking hooks freeze the TUI (dropped keystrokes, unresponsive UI). The plugin uses these strategies:
+- Zero work at initialization (all deferred to first hook fire)
+- Context fetched once and cached for the session
+- Tool observations saved as fire-and-forget (no await)
+- All `$` shell calls use `.quiet().nothrow()` to prevent stdout leaking into the TUI
+- Binary existence checked via `Bun.file().exists()` (no subprocess)
+- Version updates checked in the background (no blocking)
+
+## Hook Mapping (Claude Code -> OpenCode)
+
+| Claude Code Hook | OpenCode Equivalent | Notes |
+|---|---|---|
+| `SessionStart` -> `hook:context` | `system.transform` (first call) | Context injected once per session |
+| `UserPromptSubmit` -> `hook:new` | Not mapped | No equivalent hook in OpenCode |
+| `PostToolUse` -> `hook:save` | `tool.execute.after` | Fire-and-forget |
+| `Stop` -> `hook:summary` | `session.compacting` | Fires on compaction |
+| `SessionEnd` -> `hook:cleanup` | Not mapped | No equivalent hook in OpenCode |
 
 ## Available OpenCode Hook Events (Reference)
 
@@ -208,9 +226,27 @@ Skills are discovered **independently from plugins**. OpenCode scans `{skill,ski
 
 ## Integration with claude-mem Backend
 
+The binary expects **JSON piped via stdin** and writes JSON to stdout:
+
 ```typescript
-const binPath = `${import.meta.dirname}/bin/claude-mem`;
-await $`${binPath} hook:context --project ${directory}`;
-await $`${binPath} hook:save --project ${directory} --tool ${tool} --args ${args} --result ${result}`;
-await $`${binPath} hook:summary --project ${directory}`;
+// Pipe JSON input, read JSON output
+const result = await $`echo ${jsonInput} | ${binPath} ${command}`.quiet().nothrow();
 ```
+
+Hook input/output types (from claude-mem-bun):
+
+```typescript
+// hook:context input
+{ cwd: string }
+
+// hook:save input
+{ session_id: string, cwd: string, tool_name: string, tool_input: unknown, tool_response: unknown }
+
+// hook:summary input
+{ session_id: string, cwd: string }
+
+// All hooks output
+{ continue: boolean, suppressOutput?: boolean, hookSpecificOutput?: { additionalContext?: string } }
+```
+
+The binary also manages a background HTTP worker service on `localhost:3456` that handles database operations. The worker is started automatically on first hook invocation and may take up to 5 seconds to become healthy.

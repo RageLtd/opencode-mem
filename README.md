@@ -6,13 +6,13 @@ Automatically captures tool executions, processes them through AI to extract sem
 
 ## Features
 
-- **Automatic Context Injection**: Past observations are injected into the system prompt via `experimental.chat.system.transform`
-- **Tool Observation Capture**: Saves all tool executions via `tool.execute.after`
+- **Automatic Context Injection**: Past observations are injected into the system prompt once per session via `experimental.chat.system.transform`
+- **Tool Observation Capture**: Saves tool executions via `tool.execute.after` (fire-and-forget, non-blocking)
 - **Session Compaction Context**: Injects memory summaries during session compaction via `experimental.session.compacting`
 - **Memory Search Tool**: Custom `memory` tool for searching past observations, decisions, and session history
 - **Memory Search Skill**: `mem-search` skill with progressive disclosure for token-efficient context loading
 - **Shared Backend**: Uses the same database as [claude-mem](https://github.com/RageLtd/claude-mem) for Claude Code compatibility
-- **Auto-Updates**: Binary is automatically downloaded/updated on startup
+- **Auto-Updates**: Binary version is checked in the background on first use
 
 ## Requirements
 
@@ -32,6 +32,8 @@ The install script:
 3. Downloads the `claude-mem` binary for your platform
 4. Symlinks skills into `~/.config/opencode/skills/` (OpenCode discovers skills from `{skill,skills}/**/SKILL.md` in each config directory, independently from plugins)
 5. Adds `zod` to `~/.config/opencode/package.json` (OpenCode auto-adds `@opencode-ai/plugin` and runs `bun install` at startup)
+
+Re-running the install script will overwrite an existing installation with the latest version.
 
 Restart OpenCode after installation.
 
@@ -75,13 +77,35 @@ export { opencodeMem, opencodeMem as default } from "./opencode-mem/index.ts"
 
 OpenCode imports all exported functions from discovered plugin files and calls each with a `PluginInput` context (`{ client, project, directory, worktree, serverUrl, $ }`). The returned `Hooks` object registers the plugin's behavior.
 
+### Binary Communication Protocol
+
+The `claude-mem` binary expects **JSON piped via stdin** and writes JSON to stdout. All hook invocations follow this pattern:
+
+```bash
+echo '{"cwd":"/path/to/project"}' | claude-mem hook:context
+```
+
+The binary also manages a background HTTP worker service that handles database operations. The worker is started automatically on first hook invocation.
+
 ### Hooks
 
-| Hook | Purpose |
-|------|---------|
-| `experimental.chat.system.transform` | Injects past context into the system prompt at session start. Also triggers binary download/update on first run. |
-| `tool.execute.after` | Captures tool executions and saves them as observations via `claude-mem hook:save`. |
-| `experimental.session.compacting` | Injects session summary context during compaction via `claude-mem hook:summary`. |
+| Hook | Binary Command | Frequency | Blocking? |
+|------|---------------|-----------|-----------|
+| `experimental.chat.system.transform` | `hook:context` | Once per session (first message only) | Yes (first call), then cached |
+| `tool.execute.after` | `hook:save` | After each tool use | No (fire-and-forget) |
+| `experimental.session.compacting` | `hook:summary` | On session compaction | Yes |
+
+**Performance design**: The plugin does zero work at initialization. All operations are deferred to when hooks actually fire. Context is fetched once and cached for the session. Tool observations are saved without blocking the UI.
+
+### Hook Mapping (Claude Code -> OpenCode)
+
+| Claude Code Hook | OpenCode Equivalent | Notes |
+|---|---|---|
+| `SessionStart` -> `hook:context` | `system.transform` (first call) | Context injected once per session |
+| `UserPromptSubmit` -> `hook:new` | Not mapped | No equivalent hook in OpenCode |
+| `PostToolUse` -> `hook:save` | `tool.execute.after` | Fire-and-forget |
+| `Stop` -> `hook:summary` | `session.compacting` | Fires on compaction |
+| `SessionEnd` -> `hook:cleanup` | Not mapped | No equivalent hook in OpenCode |
 
 ### Skills
 
@@ -110,34 +134,18 @@ OpenCode
   |     |
   |     +-- Plugin (plugins/opencode-mem/index.ts)
   |           |
-  |           +-- experimental.chat.system.transform --> claude-mem hook:context
-  |           +-- tool.execute.after                 --> claude-mem hook:save
-  |           +-- experimental.session.compacting    --> claude-mem hook:summary
-  |           +-- tool: memory                       --> claude-mem search/list
+  |           +-- system.transform  --[stdin JSON]--> claude-mem hook:context  (once, cached)
+  |           +-- tool.execute.after --[stdin JSON]--> claude-mem hook:save    (fire-and-forget)
+  |           +-- session.compacting --[stdin JSON]--> claude-mem hook:summary
+  |           +-- tool: memory       --[stdin JSON]--> claude-mem hook:context
   |
   +-- Skill Discovery (skills/mem-search/SKILL.md)
   |
   +-- claude-mem binary (plugins/opencode-mem/bin/claude-mem)
         |
+        +-- Worker HTTP service (localhost:3456)
         +-- SQLite DB (shared with claude-mem for Claude Code)
 ```
-
-### API (via worker service)
-
-The backend worker runs on `http://localhost:3456`:
-
-```bash
-# Get recent context
-curl "http://localhost:3456/context?project=myproject&limit=10"
-
-# Search observations
-curl "http://localhost:3456/search?query=api&concept=decision"
-
-# Get decisions
-curl "http://localhost:3456/decisions?since=7d"
-```
-
-See `skills/mem-search/SKILL.md` for full API documentation.
 
 ## Supported Platforms
 
