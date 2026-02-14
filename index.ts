@@ -2,7 +2,7 @@ import type { Plugin, PluginInput } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 
 const getBinPath = (): string => {
-	return `${import.meta.dirname}/../bin/claude-mem`;
+	return `${import.meta.dirname}/bin/claude-mem`;
 };
 
 const getPlatformBinaryName = (): string => {
