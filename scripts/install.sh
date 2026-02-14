@@ -9,14 +9,17 @@ echo "Installing ${PLUGIN_NAME}..."
 
 # Create plugins directory if it doesn't exist
 mkdir -p "${HOME}/.config/opencode/plugins"
-mkdir -p "${INSTALL_DIR}"
 
-# Check if already installed
-if [ -d "${INSTALL_DIR}" ]; then
+# Check if already installed (but allow fresh install)
+if [ -d "${INSTALL_DIR}" ] && [ "$(ls -A ${INSTALL_DIR})" ]; then
     echo "Plugin already installed at ${INSTALL_DIR}"
     echo "To update, run: rm -rf ${INSTALL_DIR} && $0"
     exit 0
 fi
+
+# Create fresh install directory
+rm -rf "${INSTALL_DIR}"
+mkdir -p "${INSTALL_DIR}"
 
 # Download the repository as a zip
 TEMP_DIR=$(mktemp -d)
