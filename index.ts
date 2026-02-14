@@ -144,102 +144,129 @@ const ensureBinaryUpToDate = async (
 	return true;
 };
 
-const runClaudeMem = async (
+/**
+ * Runs a claude-mem hook by piping JSON input via stdin.
+ * The binary reads JSON from stdin and writes JSON to stdout.
+ */
+const runHook = async (
 	$: PluginInput["$"],
-	args: string[],
-): Promise<{ data: string; error: null } | { data: null; error: string }> => {
+	command: string,
+	input: Record<string, unknown>,
+): Promise<{ data: string | null; error: string | null }> => {
 	const binPath = getBinPath();
-	const result = await $`${binPath} ${args}`.quiet().nothrow();
+	const jsonInput = JSON.stringify(input);
+	const result = await $`echo ${jsonInput} | ${binPath} ${command}`
+		.quiet()
+		.nothrow();
+
 	if (result.exitCode !== 0) {
-		const errMsg = result.stderr ? result.text() : "Unknown error";
-		return { data: null, error: errMsg };
+		return { data: null, error: result.text() || "Unknown error" };
 	}
+
 	return { data: result.text(), error: null };
+};
+
+/**
+ * Parses hook output JSON to extract context or additional info.
+ */
+const parseHookOutput = (
+	raw: string,
+): {
+	context: string | null;
+	systemMessage: string | null;
+} => {
+	const parsed = JSON.parse(raw) as {
+		continue: boolean;
+		systemMessage?: string;
+		hookSpecificOutput?: {
+			additionalContext?: string;
+		};
+	};
+	return {
+		context: parsed.hookSpecificOutput?.additionalContext ?? null,
+		systemMessage: parsed.systemMessage ?? null,
+	};
 };
 
 export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 	const { client, $, directory } = ctx;
 
-	// Use Bun.file for non-blocking binary existence check
-	const binPath = getBinPath();
-	const isBinaryPresent = await Bun.file(binPath).exists();
-
-	// If binary exists, check for updates in the background
-	if (isBinaryPresent) {
-		ensureBinaryUpToDate($, client.app.log);
-	}
-
-	// Pre-fetch context eagerly so system.transform returns instantly
+	// Lazy state — no work done until first hook fires
+	let binaryChecked = false;
+	let isBinaryPresent = false;
 	let cachedContext: string | null = null;
-	let contextReady = false;
 
-	const refreshContext = () => {
-		if (!isBinaryPresent) return;
-		runClaudeMem($, ["hook:context", "--project", directory]).then((result) => {
-			cachedContext = result.error ? null : result.data;
-			contextReady = true;
-		});
+	const checkBinary = async (): Promise<boolean> => {
+		if (binaryChecked) return isBinaryPresent;
+		binaryChecked = true;
+		isBinaryPresent = await Bun.file(getBinPath()).exists();
+		if (isBinaryPresent) {
+			// Background update check — no blocking
+			ensureBinaryUpToDate($, client.app.log);
+		}
+		return isBinaryPresent;
 	};
-
-	// Start fetching context immediately at plugin init
-	refreshContext();
 
 	return {
 		"experimental.chat.system.transform": async (_input, output) => {
-			if (!isBinaryPresent && !contextReady) {
+			const hasBinary = await checkBinary();
+
+			if (!hasBinary) {
 				// Binary missing — try to download (blocks only on first use with no binary)
 				const success = await ensureBinaryUpToDate($, client.app.log);
 				if (!success) return;
-				const result = await runClaudeMem($, [
-					"hook:context",
-					"--project",
-					directory,
-				]);
-				if (result.data) {
-					output.system.push(result.data);
-				}
-				return;
+				isBinaryPresent = true;
 			}
 
-			// Return cached context immediately (non-blocking)
+			// First call or no cache — fetch synchronously
+			if (cachedContext === null) {
+				const result = await runHook($, "hook:context", {
+					cwd: directory,
+				});
+				if (result.data) {
+					const parsed = parseHookOutput(result.data);
+					cachedContext = parsed.context ?? "";
+				}
+			}
+
 			if (cachedContext) {
 				output.system.push(cachedContext);
 			}
 
-			// Refresh context in the background for next message
-			refreshContext();
+			// Refresh in background for next message
+			runHook($, "hook:context", { cwd: directory }).then((result) => {
+				if (result.data) {
+					const parsed = parseHookOutput(result.data);
+					cachedContext = parsed.context ?? "";
+				}
+			});
 		},
 
 		"tool.execute.after": async (input, _output) => {
 			if (!isBinaryPresent) return;
-			const toolName = input.tool;
-			const args = JSON.stringify(input.args || {});
-			const toolOutput = _output.output || "";
 
 			// Fire-and-forget to avoid blocking OpenCode's UI
-			runClaudeMem($, [
-				"hook:save",
-				"--project",
-				directory,
-				"--tool",
-				toolName,
-				"--args",
-				args,
-				"--result",
-				toolOutput,
-			]);
+			runHook($, "hook:save", {
+				session_id: "",
+				cwd: directory,
+				tool_name: input.tool,
+				tool_input: input.args || {},
+				tool_response: (_output.output || "").slice(0, 4096),
+			});
 		},
 
 		"experimental.session.compacting": async (_input, output) => {
 			if (!isBinaryPresent) return;
-			const summaryResult = await runClaudeMem($, [
-				"hook:summary",
-				"--project",
-				directory,
-			]);
+			const result = await runHook($, "hook:summary", {
+				session_id: "",
+				cwd: directory,
+			});
 
-			if (summaryResult.data) {
-				output.context.push(summaryResult.data);
+			if (result.data) {
+				const parsed = parseHookOutput(result.data);
+				if (parsed.context) {
+					output.context.push(parsed.context);
+				}
 			}
 		},
 
@@ -255,13 +282,10 @@ export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 				},
 				async execute(args, context) {
 					if (args.action === "search" && args.query) {
-						const result = await runClaudeMem($, [
-							"search",
-							"--query",
-							args.query,
-							"--project",
-							context.directory,
-						]);
+						const result = await runHook($, "hook:context", {
+							cwd: context.directory,
+							query: args.query,
+						});
 						if (result.error) {
 							return `Error searching memory: ${result.error}`;
 						}
@@ -269,11 +293,9 @@ export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 					}
 
 					if (args.action === "list") {
-						const result = await runClaudeMem($, [
-							"list",
-							"--project",
-							context.directory,
-						]);
+						const result = await runHook($, "hook:context", {
+							cwd: context.directory,
+						});
 						if (result.error) {
 							return `Error listing memory: ${result.error}`;
 						}
