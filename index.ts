@@ -194,6 +194,7 @@ export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 	// Lazy state — no work done until first hook fires
 	let binaryChecked = false;
 	let isBinaryPresent = false;
+	let contextLoaded = false;
 	let cachedContext: string | null = null;
 
 	const checkBinary = async (): Promise<boolean> => {
@@ -218,28 +219,21 @@ export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 				isBinaryPresent = true;
 			}
 
-			// First call or no cache — fetch synchronously
-			if (cachedContext === null) {
+			// Load context once per session (mirrors Claude Code's SessionStart hook)
+			if (!contextLoaded) {
+				contextLoaded = true;
 				const result = await runHook($, "hook:context", {
 					cwd: directory,
 				});
 				if (result.data) {
 					const parsed = parseHookOutput(result.data);
-					cachedContext = parsed.context ?? "";
+					cachedContext = parsed.context ?? null;
 				}
 			}
 
 			if (cachedContext) {
 				output.system.push(cachedContext);
 			}
-
-			// Refresh in background for next message
-			runHook($, "hook:context", { cwd: directory }).then((result) => {
-				if (result.data) {
-					const parsed = parseHookOutput(result.data);
-					cachedContext = parsed.context ?? "";
-				}
-			});
 		},
 
 		"tool.execute.after": async (input, _output) => {
