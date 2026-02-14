@@ -203,7 +203,8 @@ export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 			const args = JSON.stringify(input.args || {});
 			const toolOutput = output.output || "";
 
-			await runClaudeMem($, [
+			// Fire-and-forget to avoid blocking OpenCode's UI
+			runClaudeMem($, [
 				"hook:save",
 				"--project",
 				directory,
