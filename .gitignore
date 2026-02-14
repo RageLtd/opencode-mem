@@ -4,3 +4,4 @@
 node_modules
 # OpenCode plugin binary (downloaded at runtime)
 bin/claude-mem
+logs
