@@ -9,6 +9,7 @@ echo "Installing ${PLUGIN_NAME}..."
 
 # Create plugins directory if it doesn't exist
 mkdir -p "${HOME}/.config/opencode/plugins"
+mkdir -p "${INSTALL_DIR}"
 
 # Check if already installed
 if [ -d "${INSTALL_DIR}" ]; then
