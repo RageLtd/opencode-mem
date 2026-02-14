@@ -75,6 +75,12 @@ const downloadBinary = async (
 	url: string,
 ): Promise<{ success: boolean; error: string | null }> => {
 	const binPath = getBinPath();
+	const binDir = binPath.replace(/\/[^/]+$/, "");
+
+	const mkdirResult = await $`mkdir -p ${binDir}`.nothrow();
+	if (mkdirResult.exitCode !== 0) {
+		return { success: false, error: "Failed to create bin directory" };
+	}
 
 	const response = await fetch(url);
 	if (!response.ok) {
