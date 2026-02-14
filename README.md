@@ -20,27 +20,15 @@ Automatically captures tool executions, processes them through AI to extract sem
 
 ## Installation
 
-### From GitHub (Recommended)
-
-Add to your `opencode.json`:
-
-```json
-{
-  "plugin": ["github:RageLtd/opencode-mem"]
-}
+```bash
+curl -sL https://raw.githubusercontent.com/RageLtd/opencode-mem/main/scripts/install.sh | bash
 ```
 
-### Local Development
+This will install the plugin to `~/.config/opencode/plugins/opencode-mem`.
 
-Clone this repository and create a symlink:
+For project-specific installation, create a symlink manually:
 
 ```bash
-# Clone somewhere
-git clone https://github.com/RageLtd/opencode-mem.git /path/to/opencode-mem
-
-# Create symlink in your project or global config
-ln -s /path/to/opencode-mem ~/.config/opencode/plugins/opencode-mem
-# OR for project-specific
 ln -s /path/to/opencode-mem /your/project/.opencode/plugins/opencode-mem
 ```
 
