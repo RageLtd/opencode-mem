@@ -161,8 +161,17 @@ export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 	const { client, $, directory } = ctx;
 	let isBinaryReady = false;
 
-	const ensureBinary = async (): Promise<boolean> => {
+	const checkBinaryExists = async (): Promise<boolean> => {
 		if (isBinaryReady) return true;
+		const binPath = getBinPath();
+		const result = await $`test -x ${binPath}`.quiet().nothrow();
+		if (result.exitCode === 0) {
+			isBinaryReady = true;
+			// Check for updates in the background, don't block
+			ensureBinaryUpToDate($, client.app.log);
+			return true;
+		}
+		// Binary missing — must download synchronously
 		const success = await ensureBinaryUpToDate($, client.app.log);
 		if (success) {
 			isBinaryReady = true;
@@ -172,7 +181,7 @@ export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 
 	return {
 		"experimental.chat.system.transform": async (_input, output) => {
-			const ready = await ensureBinary();
+			const ready = await checkBinaryExists();
 			if (!ready) return;
 
 			const result = await runClaudeMem($, [
