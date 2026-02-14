@@ -106,7 +106,7 @@ if [ -n "${BINARY_NAME}" ]; then
         curl -sL "${RELEASE_URL}" -o "${INSTALL_DIR}/bin/claude-mem"
         chmod +x "${INSTALL_DIR}/bin/claude-mem"
         echo "Binary installed: ${INSTALL_DIR}/bin/claude-mem"
-        "${INSTALL_DIR}/bin/claude-mem" version 2>/dev/null || true
+        "${INSTALL_DIR}/bin/claude-mem" version >/dev/null 2>&1 || true
     else
         echo "Warning: Could not find binary download URL. The plugin will attempt to download it at runtime."
     fi

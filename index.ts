@@ -25,7 +25,7 @@ const getCurrentVersion = async (
 	$: PluginInput["$"],
 ): Promise<string | null> => {
 	const binPath = getBinPath();
-	const result = await $`${binPath} version`.nothrow();
+	const result = await $`${binPath} version`.quiet().nothrow();
 	if (result.exitCode !== 0) {
 		return null;
 	}
@@ -77,12 +77,12 @@ const downloadBinary = async (
 	const binPath = getBinPath();
 	const binDir = binPath.replace(/\/[^/]+$/, "");
 
-	const mkdirResult = await $`mkdir -p ${binDir}`.nothrow();
+	const mkdirResult = await $`mkdir -p ${binDir}`.quiet().nothrow();
 	if (mkdirResult.exitCode !== 0) {
 		return { data: null, error: "Failed to create bin directory" };
 	}
 
-	const curlResult = await $`curl -fSL -o ${binPath} ${url}`.nothrow();
+	const curlResult = await $`curl -fSL -o ${binPath} ${url}`.quiet().nothrow();
 	if (curlResult.exitCode !== 0) {
 		return {
 			data: null,
@@ -90,7 +90,7 @@ const downloadBinary = async (
 		};
 	}
 
-	const chmodResult = await $`chmod +x ${binPath}`.nothrow();
+	const chmodResult = await $`chmod +x ${binPath}`.quiet().nothrow();
 	if (chmodResult.exitCode !== 0) {
 		return { data: null, error: "Failed to make binary executable" };
 	}
@@ -149,7 +149,7 @@ const runClaudeMem = async (
 	args: string[],
 ): Promise<{ data: string; error: null } | { data: null; error: string }> => {
 	const binPath = getBinPath();
-	const result = await $`${binPath} ${args}`.nothrow();
+	const result = await $`${binPath} ${args}`.quiet().nothrow();
 	if (result.exitCode !== 0) {
 		const errMsg = result.stderr ? result.text() : "Unknown error";
 		return { data: null, error: errMsg };
