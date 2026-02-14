@@ -73,18 +73,18 @@ const getLatestVersion = async (): Promise<{
 const downloadBinary = async (
 	$: PluginInput["$"],
 	url: string,
-): Promise<{ success: boolean; error: string | null }> => {
+): Promise<{ data: true; error: null } | { data: null; error: string }> => {
 	const binPath = getBinPath();
 	const binDir = binPath.replace(/\/[^/]+$/, "");
 
 	const mkdirResult = await $`mkdir -p ${binDir}`.nothrow();
 	if (mkdirResult.exitCode !== 0) {
-		return { success: false, error: "Failed to create bin directory" };
+		return { data: null, error: "Failed to create bin directory" };
 	}
 
 	const response = await fetch(url);
 	if (!response.ok) {
-		return { success: false, error: `HTTP ${response.status}` };
+		return { data: null, error: `HTTP ${response.status}` };
 	}
 
 	const arrayBuffer = await response.arrayBuffer();
@@ -93,10 +93,10 @@ const downloadBinary = async (
 	await Bun.write(binPath, uint8Array);
 	const chmodResult = await $`chmod +x ${binPath}`.nothrow();
 	if (chmodResult.exitCode !== 0) {
-		return { success: false, error: "Failed to make binary executable" };
+		return { data: null, error: "Failed to make binary executable" };
 	}
 
-	return { success: true, error: null };
+	return { data: true, error: null };
 };
 
 const ensureBinaryUpToDate = async (
@@ -129,7 +129,7 @@ const ensureBinaryUpToDate = async (
 		});
 
 		const downloadResult = await downloadBinary($, latest.downloadUrl);
-		if (!downloadResult.success) {
+		if (downloadResult.error) {
 			await log({
 				body: {
 					service: "opencode-mem",
@@ -157,14 +157,18 @@ const runClaudeMem = async (
 
 export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 	const { client, $, directory } = ctx;
+	let isBinaryReady = false;
+
+	const ensureBinary = async (): Promise<boolean> => {
+		if (isBinaryReady) return true;
+		await ensureBinaryUpToDate($, client.app.log);
+		isBinaryReady = true;
+		return true;
+	};
 
 	return {
-		"session.created": async (
-			_input: unknown,
-			output: { context?: string[] },
-		) => {
-			// Ensure binary exists before first use
-			await ensureBinaryUpToDate($, client.app.log);
+		"experimental.chat.system.transform": async (_input, output) => {
+			await ensureBinary();
 
 			const result = await runClaudeMem($, [
 				"hook:context",
@@ -184,17 +188,15 @@ export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 				return;
 			}
 
-			output.context = output.context || [];
-			output.context.push(result.data || "");
+			if (result.data) {
+				output.system.push(result.data);
+			}
 		},
 
-		"tool.execute.after": async (
-			input: { tool: string; sessionID: string; callID: string; args: unknown },
-			output: { title: string; output: string; metadata: unknown },
-		) => {
+		"tool.execute.after": async (input, output) => {
 			const toolName = input.tool;
 			const args = JSON.stringify(input.args || {});
-			const result = output.output || "";
+			const toolOutput = output.output || "";
 
 			await runClaudeMem($, [
 				"hook:save",
@@ -205,18 +207,26 @@ export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 				"--args",
 				args,
 				"--result",
-				result,
+				toolOutput,
 			]);
 		},
 
-		"session.idle": async () => {
-			await runClaudeMem($, ["hook:summary", "--project", directory]);
+		"experimental.session.compacting": async (_input, output) => {
+			const summaryResult = await runClaudeMem($, [
+				"hook:summary",
+				"--project",
+				directory,
+			]);
+
+			if (summaryResult.data) {
+				output.context.push(summaryResult.data);
+			}
 		},
 
 		tool: {
 			memory: tool({
 				description:
-					"Search and manage persistent memory from Claude Code sessions",
+					"Search and manage persistent memory from OpenCode sessions",
 				args: {
 					query: tool.schema.string().optional(),
 					action: tool.schema
@@ -251,7 +261,7 @@ export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 					}
 
 					if (args.action === "clear") {
-						return "Use Claude Code's claude-mem plugin to clear memory";
+						return "Use the claude-mem CLI to clear memory";
 					}
 
 					return "Unknown action";
