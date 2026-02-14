@@ -95,12 +95,13 @@ else
 fi
 
 if [ -n "${BINARY_NAME}" ]; then
-    RELEASE_URL=$(curl -s "https://api.github.com/repos/${BINARY_REPO}/releases/latest" \
+    TAG_NAME=$(curl -s "https://api.github.com/repos/${BINARY_REPO}/releases/latest" \
         -H "User-Agent: opencode-mem" \
-        | grep "browser_download_url.*${BINARY_NAME}" \
+        | grep -o '"tag_name":"[^"]*"' \
         | cut -d '"' -f 4)
+    RELEASE_URL="https://github.com/${BINARY_REPO}/releases/download/${TAG_NAME}/${BINARY_NAME}"
 
-    if [ -n "${RELEASE_URL}" ]; then
+    if [ -n "${TAG_NAME}" ]; then
         mkdir -p "${INSTALL_DIR}/bin"
         curl -sL "${RELEASE_URL}" -o "${INSTALL_DIR}/bin/claude-mem"
         chmod +x "${INSTALL_DIR}/bin/claude-mem"
