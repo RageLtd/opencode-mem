@@ -102,7 +102,7 @@ const downloadBinary = async (
 const ensureBinaryUpToDate = async (
 	$: PluginInput["$"],
 	log: PluginInput["client"]["app"]["log"],
-): Promise<void> => {
+): Promise<boolean> => {
 	const currentVersion = await getCurrentVersion($);
 	const latest = await getLatestVersion();
 
@@ -114,7 +114,7 @@ const ensureBinaryUpToDate = async (
 				message: "Could not check for latest claude-mem version",
 			},
 		});
-		return;
+		return currentVersion !== null;
 	}
 
 	const needsUpdate = !currentVersion || latest.version !== currentVersion;
@@ -138,8 +138,11 @@ const ensureBinaryUpToDate = async (
 					extra: { error: downloadResult.error },
 				},
 			});
+			return false;
 		}
 	}
+
+	return true;
 };
 
 const runClaudeMem = async (
@@ -161,14 +164,17 @@ export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 
 	const ensureBinary = async (): Promise<boolean> => {
 		if (isBinaryReady) return true;
-		await ensureBinaryUpToDate($, client.app.log);
-		isBinaryReady = true;
-		return true;
+		const success = await ensureBinaryUpToDate($, client.app.log);
+		if (success) {
+			isBinaryReady = true;
+		}
+		return success;
 	};
 
 	return {
 		"experimental.chat.system.transform": async (_input, output) => {
-			await ensureBinary();
+			const ready = await ensureBinary();
+			if (!ready) return;
 
 			const result = await runClaudeMem($, [
 				"hook:context",

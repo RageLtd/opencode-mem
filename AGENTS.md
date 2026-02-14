@@ -11,7 +11,7 @@ Coding agent for OpenCode and Claude Code. Deliver concise, correct, auditable r
 
 This repository creates an OpenCode plugin (`opencode-mem`) that provides persistent memory for OpenCode sessions. It reuses the backend from github.com/RageLtd/claude-mem as a worker service.
 
-Architecture: OpenCode → Plugin Hooks → claude-mem binary (worker) → SQLite DB
+Architecture: OpenCode -> Plugin Loader (`plugins/opencode-mem.ts`) -> Plugin (`plugins/opencode-mem/index.ts`) -> claude-mem binary -> SQLite DB
 
 ---
 
@@ -22,15 +22,15 @@ Architecture: OpenCode → Plugin Hooks → claude-mem binary (worker) → SQLit
 ```bash
 # Install Bun: curl -fsSL https://bun.sh/install | bash
 bun install
-bun run src/index.ts
+bun run index.ts
 ```
 
 ## Biome (Linting & Formatting) - CRITICAL
 
 ```bash
 # Check and auto-fix all issues
-biome check --write .
-biome check .
+bunx biome check --write .
+bunx biome check .
 ```
 Install: `bun add --dev @biomejs/biome`
 
@@ -68,14 +68,14 @@ See `.claude/rules/coding/` for detailed guidelines:
 
 - **Error Handling**: `.claude/rules/coding/error-handling.md`
   - Prefer async/await with explicit error handling
-  - Avoid try/catch — use Result/Either patterns
+  - Avoid try/catch -- use Result/Either patterns
   - Return `{ data, error: null }` for success, `{ data: null, error }` for failure
 
 - **Code Changes**: `.claude/rules/quality/code-changes.md`
   - Keep changes minimal and focused
   - Match existing style, no license headers unless requested
 
-- **Imports**: Group as external → internal → relative
+- **Imports**: Group as external -> internal -> relative
 - **Naming**: camelCase (vars), PascalCase (types), SCREAMING_SNAKE_CASE (constants), kebab-case.ts (files)
 - **Booleans**: Use `is`, `has`, `can`, `should` prefixes
 
@@ -105,10 +105,10 @@ See `.claude/rules/quality/tdd.md`:
 
 See `.claude/rules/rule-priority.md`:
 
-1. **Safety** — security, secrets, destructive action guards
-2. **Quality** — test coverage, security review, quality gates
-3. **Workflow** — plan-first, stop conditions, approvals
-4. **Code style** — functional patterns, error handling, minimal changes
+1. **Safety** -- security, secrets, destructive action guards
+2. **Quality** -- test coverage, security review, quality gates
+3. **Workflow** -- plan-first, stop conditions, approvals
+4. **Code style** -- functional patterns, error handling, minimal changes
 
 ---
 
@@ -147,27 +147,70 @@ See `.claude/rules/tooling/tool-usage.md`:
 # PLUGIN STRUCTURE
 
 ```
-.opencode/plugin/opencode-mem/
-├── package.json
-├── tsconfig.json
-├── src/
-│   ├── index.ts          # Main plugin entry point
-│   ├── db.ts             # Database layer
-│   ├── hooks/            # session.created → hook:context
-│   └── commands/         # Custom /memory command
-└── skills/
-    └── mem-search/       # Memory search skill
+~/.config/opencode/
+  plugins/
+    opencode-mem.ts           # Loader file (OpenCode discovers this)
+    opencode-mem/             # Plugin subdirectory
+      index.ts                # Main plugin entry point
+      package.json            # Plugin dependencies
+      tsconfig.json           # TypeScript config
+      bin/
+        claude-mem            # Backend binary (auto-downloaded)
+      skills/
+        mem-search/
+          SKILL.md            # Memory search skill definition
+  skills/
+    mem-search -> ../plugins/opencode-mem/skills/mem-search  # Symlink for discovery
+  package.json                # Config-level deps (zod, @opencode-ai/plugin)
 ```
 
-## OpenCode Events
+## OpenCode Plugin Discovery
 
-- `session.created` - New session started
-- `session.idle` - Agent finished responding
-- `session.deleted` - Session ended
+OpenCode discovers local plugins by scanning `{plugin,plugins}/*.{ts,js}` in each config directory. The glob does **not** recurse into subdirectories. The loader file (`opencode-mem.ts`) at the top level re-exports from the subdirectory:
+
+```typescript
+export { opencodeMem, opencodeMem as default } from "./opencode-mem/index.ts"
+```
+
+OpenCode imports all exported functions and calls each with `PluginInput` to get `Hooks`.
+
+## OpenCode Skill Discovery
+
+Skills are discovered **independently from plugins**. OpenCode scans `{skill,skills}/**/SKILL.md` in each config directory. The install script symlinks `skills/mem-search/` to the config directory's `skills/` folder.
+
+## Plugin Hooks Used
+
+| Hook | Purpose |
+|------|---------|
+| `experimental.chat.system.transform` | Injects past context into system prompt, triggers binary update |
+| `tool.execute.after` | Captures tool executions as observations |
+| `experimental.session.compacting` | Injects summary context during session compaction |
+
+## Available OpenCode Hook Events (Reference)
+
+- `event` - General event bus
+- `config` - Configuration changes
+- `tool` - Custom tool definitions (`{ [name]: ToolDefinition }`)
+- `auth` - Authentication
+- `chat.message` - Chat message lifecycle
+- `chat.params` / `chat.headers` - Chat request params/headers
+- `permission.ask` - Permission requests
+- `command.execute.before` - Before command execution
 - `tool.execute.before` / `tool.execute.after` - Tool lifecycle
+- `shell.env` - Shell environment variables
+- `experimental.chat.system.transform` - Transform system prompt
+- `experimental.chat.messages.transform` - Transform chat messages
+- `experimental.session.compacting` - Session compaction
+- `experimental.text.complete` - Text completion
+- `tool.definition` - Tool definition modification
+
+**Note**: There are NO `session.created`, `session.idle`, or `session.deleted` hooks.
 
 ## Integration with claude-mem Backend
 
 ```typescript
-await $`${CLAUDE_MEM_ROOT}/bin/claude-mem hook:context --project ${projectName}`;
+const binPath = `${import.meta.dirname}/bin/claude-mem`;
+await $`${binPath} hook:context --project ${directory}`;
+await $`${binPath} hook:save --project ${directory} --tool ${tool} --args ${args} --result ${result}`;
+await $`${binPath} hook:summary --project ${directory}`;
 ```
