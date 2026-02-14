@@ -82,15 +82,14 @@ const downloadBinary = async (
 		return { data: null, error: "Failed to create bin directory" };
 	}
 
-	const response = await fetch(url);
-	if (!response.ok) {
-		return { data: null, error: `HTTP ${response.status}` };
+	const curlResult = await $`curl -fSL -o ${binPath} ${url}`.nothrow();
+	if (curlResult.exitCode !== 0) {
+		return {
+			data: null,
+			error: `curl failed (exit ${curlResult.exitCode}): ${curlResult.text()}`,
+		};
 	}
 
-	const arrayBuffer = await response.arrayBuffer();
-	const uint8Array = new Uint8Array(arrayBuffer);
-
-	await Bun.write(binPath, uint8Array);
 	const chmodResult = await $`chmod +x ${binPath}`.nothrow();
 	if (chmodResult.exitCode !== 0) {
 		return { data: null, error: "Failed to make binary executable" };
