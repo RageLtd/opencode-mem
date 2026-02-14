@@ -159,14 +159,13 @@ export const opencodeMem: Plugin = async (ctx: PluginInput) => {
 	const { client, $, directory } = ctx;
 
 	return {
-		"server.connected": async () => {
-			await ensureBinaryUpToDate($, client.app.log);
-		},
-
 		"session.created": async (
 			_input: unknown,
 			output: { context?: string[] },
 		) => {
+			// Ensure binary exists before first use
+			await ensureBinaryUpToDate($, client.app.log);
+
 			const result = await runClaudeMem($, [
 				"hook:context",
 				"--project",
