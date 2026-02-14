@@ -1,3 +1,6 @@
 .env
 .env.local
 .DS_Store
+node_modules
+# OpenCode plugin binary (downloaded at runtime)
+bin/claude-mem

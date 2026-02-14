@@ -1,0 +1,20 @@
+{
+	"name": "@rageltd/opencode-mem",
+	"version": "1.0.0",
+	"description": "Persistent memory system for OpenCode - context compression and recall across sessions",
+	"type": "module",
+	"main": "./src/index.ts",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"dependencies": {
+		"@opencode-ai/plugin": "^0.15.18",
+		"zod": "^3.24.0"
+	},
+	"devDependencies": {
+		"typescript": "^5.9.3"
+	},
+	"author": {
+		"name": "RageLtd"
+	}
+}
